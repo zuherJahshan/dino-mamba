@@ -27,24 +27,24 @@ class DinoSR(nn.Module):
         super(DinoSR, self).__init__()
 
         # save the config
-        self.teacher_decay = cfg.ema_decay
-        self.teacher_end_decay = cfg.ema_end_decay
-        self.teacher_decay_steps = cfg.ema_anneal_end_step
+        self.teacher_decay = cfg.ema_decay # C
+        self.teacher_end_decay = cfg.ema_end_decay #C
+        self.teacher_decay_steps = cfg.ema_anneal_end_step #C
 
-        self.starting_mask_prob = get_starting_mask_prob(cfg.mask_prob, cfg.mask_length)
-        self.num_layers = cfg.encoder_layers
-        self.layers_to_include_in_loss = cfg.average_top_k_layers
-        self.mask_length = cfg.mask_length
+        self.starting_mask_prob = get_starting_mask_prob(cfg.mask_prob, cfg.mask_length) #C
+        self.num_layers = cfg.encoder_layers #C
+        self.layers_to_include_in_loss = cfg.average_top_k_layers #C
+        self.mask_length = cfg.mask_length #C
 
         # Initailize the feature extractor
         conv_feature_extractor_layers = eval(cfg.conv_feature_layers)
-        self.feature_extractor = ConvFeatureExtractionModel(
+        self.feature_extractor = ConvFeatureExtractionModel( 
             conv_layers=conv_feature_extractor_layers,
             dropout=0.0,
             mode=cfg.extractor_mode # Check this
-        ).to(device)
+        ).to(device) # layer included
         
-        conv_feature_layers_list = eval(cfg.conv_feature_layers)
+        conv_feature_layers_list = eval(cfg.conv_feature_layers) # layer included
 
         self.conv_feature_layers = [
             {
@@ -58,27 +58,32 @@ class DinoSR(nn.Module):
         self.feature_extractor_out_length_calculator = OutConvShape(
             self.conv_feature_layers,
             same=False,
-        )
+        ) # no nn.module, but nothing to be saved here
 
         # TODO: understand what's happening here
         normalized_shape = conv_feature_extractor_layers[-1][0]
         self.layer_norm = LayerNorm(
             normalized_shape
-        )
+        )# layer included
 
         self.post_fe_proj = nn.Linear(
             in_features=self.conv_feature_layers[-1]['d'],
             out_features=cfg.encoder_embed_dim,
-        )
+        )# layer included
 
+        # layer included
         self.student = model_creator(cfg)
+        # layers included
         self.classifiers = nn.ModuleList([
             nn.Linear(cfg.encoder_embed_dim, cfg.codebook_size) for _ in range(cfg.average_top_k_layers)
         ])
 
         # self.softmax = nn.Softmax(dim=-1) # Can be discarded if returning the log softmax function
         
+        # layer included
         self.teacher = model_creator(cfg)
+        
+        # layer included
         self.teacher.load_state_dict(self.student.state_dict())
         self.codebook = Codebook(
             dim=cfg.encoder_embed_dim,
