@@ -7,6 +7,9 @@ from torch.nn.utils.rnn import pad_sequence
 
 datapath = '/workspace/mamba_based_slm/data/LibriSpeech/train-*/**/*.flac'
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = 'cpu'
+
 class AudioDataset(Dataset):
     def __init__(self, file_list, transform=None):
         self.file_list = file_list
@@ -24,7 +27,6 @@ class AudioDataset(Dataset):
 
 def collate_fn(batch):
     # Move data to CUDA device
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # Pad all waveforms to the maximum length in the batch
     batched_lengths = torch.tensor([waveform.shape[0] for waveform in batch]).to(device)
@@ -35,9 +37,14 @@ def collate_fn(batch):
     
     return padded_waveforms, batched_lengths
 
-def get_dataloader(batch_size, num_workers=8, sample_rate=16000):
+def get_dataloader(batch_size, device='cuda', num_workers=8, sample_rate=16000):
     transform = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
     train_files = glob.glob(datapath, recursive=True)
     dataset = AudioDataset(train_files, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn)
-    return dataloader
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )

@@ -27,14 +27,14 @@ class DinoSR(nn.Module):
         super(DinoSR, self).__init__()
 
         # save the config
-        self.teacher_decay = cfg.ema_decay # C
-        self.teacher_end_decay = cfg.ema_end_decay #C
-        self.teacher_decay_steps = cfg.ema_anneal_end_step #C
+        self.teacher_decay = cfg.ema_decay
+        self.teacher_end_decay = cfg.ema_end_decay
+        self.teacher_decay_steps = cfg.ema_anneal_end_step
 
-        self.starting_mask_prob = get_starting_mask_prob(cfg.mask_prob, cfg.mask_length) #C
-        self.num_layers = cfg.encoder_layers #C
-        self.layers_to_include_in_loss = cfg.average_top_k_layers #C
-        self.mask_length = cfg.mask_length #C
+        self.starting_mask_prob = get_starting_mask_prob(cfg.mask_prob, cfg.mask_length)
+        self.num_layers = cfg.encoder_layers
+        self.layers_to_include_in_loss = cfg.average_top_k_layers
+        self.mask_length = cfg.mask_length
 
         # Initailize the feature extractor
         conv_feature_extractor_layers = eval(cfg.conv_feature_layers)
@@ -106,8 +106,11 @@ class DinoSR(nn.Module):
         # bases to cover is the cumulative sum of the tensor starting_masks - ending_masks
         bases_to_cover = torch.cumsum(starting_masks - ending_masks, dim=1) > 0
 
+        # check that there is no minus values in starting_masks - ending_masks
+        assert (bases_to_cover).min() >= 0
+
         # 3. zero every mask that falls out of the feature_lengths bounds
-        included_indices = torch.arange(features.shape[1]).to(device).unsqueeze(0).expand(features.shape[0], -1) >= feature_lengths.unsqueeze(1)
+        included_indices = torch.arange(features.shape[1]).to(device).unsqueeze(0).expand(features.shape[0], -1) <= feature_lengths.unsqueeze(1)
         
         return included_indices & bases_to_cover
 
@@ -162,30 +165,53 @@ class DinoSR(nn.Module):
             targets.append(closest_codewords)
 
         
-        def calculate_accuracy(pred, target):
-            return (pred.argmax(dim=-1) == target).float().mean()
+        def calculate_accuracy(representation, target, mask):
+            # pred is [B,T,C], target is [B,T] and mask is [B,T].
+            #we should include only 
+            return ((representation.argmax(dim=-1) == target).float() * mask.float()).sum() / mask.sum()
+        
+        def calculate_probability_bins(representation, target, mask):
+            # pred is [B,T,C], target is [B,T] and mask is [B,T].
+            # onehot the target to have the same shape as pred
+            onehot_target = F.one_hot(target, num_classes=representation.shape[-1]).to(torch.float32)
+            onehot_mask = mask.unsqueeze(-1).expand_as(onehot_target).to(torch.float32)
+            # scatter the predicitons into a histogram
+            hist_sum = einsum(onehot_mask, onehot_target, F.softmax(representation, dim=-1), "b t c, b t c, b t c -> c")
+            hist_cnt = (onehot_target * onehot_mask).sum(dim=(0,1))
+            hist_cnt = torch.where(hist_cnt == 0, 1, hist_cnt)
+            return (hist_sum / hist_cnt).mean()
+
+        def calculate_loss(representation, target, mask):
+            # pred is [B,T,C], target is [B,T] and mask is [B,T].
+            # onehot the target to have the same shape as pred
+            pred = -1*F.log_softmax(representation, dim=-1)
+            onehot_target = F.one_hot(target, num_classes=pred.shape[-1]).to(torch.float32)
+            masked_onehot_target = einsum(onehot_target, mask, "b t c, b t -> b t c")
+            # calculate the loss
+            return einsum(masked_onehot_target, pred, "b t c, b t c ->")
         
         # 11. calculate the loss
         loss = 0
         accuracy = 0
+        masks_sum = 0
         for i in range(self.layers_to_include_in_loss):
-            pred = self.classifiers[i](rearrange(student_layer_results[first_layer_to_include + i][2], "t b c -> b t c")) # [B,T,C] where C is the number of classes
-            pred = -1*F.log_softmax(pred,dim=-1)
-            onehot_target = F.one_hot(targets[i], num_classes=self.codebook.num_codewords).float()
-            # masked_onehot_target is [B,T,C] and pred is [B,T,C]
-            masked_onehot_target = mask.unsqueeze(-1) * onehot_target
-            # masked_onehot_target is [B,T,C] and pred is [B,T,C]
-            loss += einsum(masked_onehot_target, pred, "b t c, b t c ->")
-            accuracy += calculate_accuracy(pred, targets[i])
-        loss /= self.layers_to_include_in_loss
+            representation = self.classifiers[i](rearrange(student_layer_results[first_layer_to_include + i][2], "t b c -> b t c")) # [B,T,C] where C is the number of classes
+            masks_sum += mask.sum()
+            loss += calculate_loss(representation, targets[i], mask)
+            accuracy += calculate_accuracy(representation, targets[i], mask)
+            prob_mean = calculate_probability_bins(representation, targets[i], mask)
+        loss = 15 * loss / masks_sum
         accuracy = accuracy / self.layers_to_include_in_loss
+        prob_mean = prob_mean / self.layers_to_include_in_loss
+        
 
 
         return {
             "loss": loss,
             "student": x,
             "teacher": teacher_x,
-            "accuracy": accuracy
+            "accuracy": accuracy,
+            "prob_mean": prob_mean
         }
 
 

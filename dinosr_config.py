@@ -11,6 +11,7 @@ class DinosrAudioConfig(Wav2Vec2Config):
     encoder_embed_dim: int = field(default=256)
     encoder_ffn_embed_dim: int = field(default=512)
     encoder_attention_heads: int = field(default=8)
+    mamba_d_state: int = field(default=64)
 
     discrete: bool = field(default=False)
     codebook_size: int = field(default=256)
