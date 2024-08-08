@@ -43,23 +43,28 @@ class MetricMemory:
 
     def _get_str(
         self,
+        print_precentage: bool,
     ): # print it in a table format
-        metric_str = f"{self.metric:.4f}"
+        metric_str = f"{(self.metric*100):.2f}%" if print_precentage else f"{self.metric:.4f}"
         if len(metric_str) < 10:
             metric_str = metric_str + ' ' * (10 - len(metric_str)) 
         else:
             metric_str = metric_str[:10]
-        return f"|    {self.metric_name} |    {self.metric:.4f}|"
+        return f"|    {self.metric_name} |    {metric_str}|"
 
-    def print(self):
-        print(self._get_str())
+    def print(
+        self,
+        print_precentage: bool = False
+    ):
+        print(self._get_str(print_precentage))
         
 
     def get_print_length(self):
-        return len(self._get_str()) 
+        return len(self._get_str(False)) 
 
     def get_metric(self):
         return self.metric
+
 
 
 # Guard the main code
@@ -77,9 +82,9 @@ if __name__ == '__main__':
         else:
             return DeepMamba(cfg)
 
-    dino_model = DinoSR(cfg, lambda cfg: model_creator(cfg, "mamba")).to(device)
+    dino_model = DinoSR(cfg, lambda cfg: model_creator(cfg, "transformer")).to(device)
     
-    model_persistant_state = ModelPersistantState('./models/mamba')
+    model_persistant_state = ModelPersistantState('./models/transformer')
     try:
         model_persistant_state.load_model(dino_model)
         print("Loaded model successfully")
@@ -132,7 +137,8 @@ if __name__ == '__main__':
         mb_accuracy = 0
         mb_prob_mean = 0
         for i, (waveforms, lengths) in enumerate(trainset):
-            step = epoch * total_step + i  # Calculate the current step
+            # empty cache to avoid memory leak
+            torch.cuda.empty_cache()
 
             # Forward pass
             results = dino_model(waveforms, lengths)
@@ -189,9 +195,9 @@ if __name__ == '__main__':
                 title_string = f"Epoch [{epoch + 1}/{num_epochs}], Batch step [{batch_step}]"
                 print(f"| {title_string}" + " " * (long_loss.get_print_length() - len(title_string) - 3) + "|")
                 long_loss.print()
-                long_accuracy.print()
-                long_prob_mean.print()
+                long_accuracy.print(print_precentage=True)
+                long_prob_mean.print(print_precentage=True)
                 print("-" * long_loss.get_print_length())
                 short_loss.print()
-                short_accuracy.print()
-                short_prob_mean.print()        
+                short_accuracy.print(print_precentage=True)
+                short_prob_mean.print(print_precentage=True)        
