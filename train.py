@@ -7,15 +7,17 @@ import multiprocessing as mp
 from dataset import get_dataloader
 from fairseq.models import BaseFairseqModel
 from fairseq.models.wav2vec import TransformerEncoder
-from dinosr import DinoSR
+from dinosr import DinoSR, model_creator
 from dinosr_config import DinosrAudioConfig
 from torch import optim
 from model_persistant_state import ModelPersistantState
 from mamba import DeepMamba
+from typing import List
+from matplotlib import pyplot as plt
 
 # Set the multiprocessing start method to 'spawn'
 mp.set_start_method('spawn', force=True)
-
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class MetricMemory:
     def __init__(
@@ -72,23 +74,21 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     cfg = DinosrAudioConfig(
-        average_top_k_layers=6,
-        encoder_layers=8,
+        average_top_k_layers=7,
+        encoder_layers=10,
+        encoder_embed_dim=512,
+        model_type="mamba",
     )
 
-    def model_creator(cfg, model_type="transformer"):
-        if model_type == "transformer":
-            return TransformerEncoder(cfg)
-        else:
-            return DeepMamba(cfg)
-
-    dino_model = DinoSR(cfg, lambda cfg: model_creator(cfg, "transformer")).to(device)
+    dino_model = DinoSR(cfg, model_creator).to(device)
     
-    model_persistant_state = ModelPersistantState('./models/transformer')
+    model_path = './models/mamba2'
+    model_persistant_state = ModelPersistantState(model_path)
     try:
-        model_persistant_state.load_model(dino_model)
+        dino_sr = model_persistant_state.load_model()
         print("Loaded model successfully")
     except:
+        dino_model = DinoSR(cfg, lambda cfg: model_creator(cfg, "mamba")).to(device)
         print("No model to load")
 
     num_epochs = 50
@@ -132,6 +132,8 @@ if __name__ == '__main__':
     short_loss = MetricMemory('Short Loss', 10)
     short_accuracy = MetricMemory('Short Accuracy', 10)
     short_prob_mean = MetricMemory('Short Prob Mean', 10)
+    # make plots dir
+    os.makedirs(f'{model_path}/plots', exist_ok=True)
     for epoch in range(num_epochs):
         mb_loss = 0
         mb_accuracy = 0
@@ -145,6 +147,7 @@ if __name__ == '__main__':
             loss = results['loss'] / n
             accuracy = results['accuracy']
             prob_mean = results['prob_mean']
+            targets: List[torch.Tensor] = results['targets']
             
             # Accumulate loss and accuracy
             mb_loss += loss.item()
@@ -200,4 +203,11 @@ if __name__ == '__main__':
                 print("-" * long_loss.get_print_length())
                 short_loss.print()
                 short_accuracy.print(print_precentage=True)
-                short_prob_mean.print(print_precentage=True)        
+                short_prob_mean.print(print_precentage=True)
+                for target in targets:
+                    onehot_target = torch.nn.functional.one_hot(target, num_classes=cfg.codebook_size)
+                    onehot_target = onehot_target.sum(dim=(0, 1)).to("cpu").detach().numpy()
+                    # plot as a histogram to the console
+                    plt.bar(range(cfg.codebook_size), onehot_target)
+                    # save plot to plt.png
+                    plt.savefig(f'{model_path}/plots/plt_{batch_step}.png')

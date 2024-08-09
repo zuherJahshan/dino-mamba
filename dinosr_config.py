@@ -1,7 +1,8 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from fairseq.models.wav2vec import Wav2Vec2Config
 from typing import Optional
 from omegaconf import II
+import yaml
 
 @dataclass
 class DinosrAudioConfig(Wav2Vec2Config):
@@ -12,6 +13,7 @@ class DinosrAudioConfig(Wav2Vec2Config):
     encoder_ffn_embed_dim: int = field(default=512)
     encoder_attention_heads: int = field(default=8)
     mamba_d_state: int = field(default=64)
+    model_type: str = field(default='transformer')
 
     discrete: bool = field(default=False)
     codebook_size: int = field(default=256)
@@ -71,3 +73,14 @@ class DinosrAudioConfig(Wav2Vec2Config):
         default=0.01,
         metadata={"help": "stop training if prediction var falls below this"},
     )
+    
+
+    @classmethod
+    def load(cls, yaml_path: str) -> 'DinosrAudioConfig':
+        with open(yaml_path, 'r') as file:
+            config_dict = yaml.safe_load(file)
+            return cls(**config_dict)
+
+    def save(self, yaml_path: str):
+        with open(yaml_path, 'w') as file:
+            yaml.safe_dump(asdict(self), file)

@@ -74,7 +74,7 @@ class Codebook(object):
         tau = torch.where(cnts > 0, self.decay, 1).to(self.device) ## freeze the codeword if it has no members
 
         # Update the codebook sum
-        self.codebooks_sum[codebook_idx] = tau * self.codebooks_sum[codebook_idx] + (1 - tau) * z
+        self.codebooks_sum[codebook_idx] = tau.unsqueeze(-1) * self.codebooks_sum[codebook_idx] + (1 - tau.unsqueeze(-1)) * z
         self.codebooks_cnt[codebook_idx] = tau * self.codebooks_cnt[codebook_idx] + (1 - tau) * cnts
 
         # Update the codebook
@@ -93,3 +93,4 @@ class Codebook(object):
         self.codebooks = [torch.tensor(cb).to(self.device) for cb in state['codebooks']]
         self.codebooks_sum = [torch.tensor(cbs).to(self.device) for cbs in state['codebooks_sum']]
         self.codebooks_cnt = [torch.tensor(cbc).to(self.device) for cbc in state['codebooks_cnt']]
+        # eza r7 n3mlha blknise msh r7 tetwza3 zy elmaskene elka3ke

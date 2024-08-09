@@ -10,10 +10,12 @@ from einops import einsum, rearrange
 from utils import get_starting_mask_prob
 from fairseq.models.wav2vec import (
     ConvFeatureExtractionModel,
-    Wav2Vec2Config
+    Wav2Vec2Config,
+    TransformerEncoder,
 )
 from typing import Callable
 import multiprocessing as mp
+from mamba import DeepMamba
 
 mp.set_start_method('spawn', force=True)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -27,6 +29,7 @@ class DinoSR(nn.Module):
         super(DinoSR, self).__init__()
 
         # save the config
+        self.cfg = cfg
         self.teacher_decay = cfg.ema_decay
         self.teacher_end_decay = cfg.ema_end_decay
         self.teacher_decay_steps = cfg.ema_anneal_end_step
@@ -114,6 +117,7 @@ class DinoSR(nn.Module):
         
         return included_indices & bases_to_cover
 
+
     def forward(
         self,
         waveforms,
@@ -200,6 +204,7 @@ class DinoSR(nn.Module):
             loss += calculate_loss(representation, targets[i], mask)
             accuracy += calculate_accuracy(representation, targets[i], mask)
             prob_mean = calculate_probability_bins(representation, targets[i], mask)
+        # loss += 
         loss = 15 * loss / masks_sum
         accuracy = accuracy / self.layers_to_include_in_loss
         prob_mean = prob_mean / self.layers_to_include_in_loss
@@ -211,7 +216,8 @@ class DinoSR(nn.Module):
             "student": x,
             "teacher": teacher_x,
             "accuracy": accuracy,
-            "prob_mean": prob_mean
+            "prob_mean": prob_mean,
+            "targets": targets,
         }
 
 
@@ -225,6 +231,7 @@ class DinoSR(nn.Module):
         for teacher_param, student_param in zip(self.teacher.parameters(), self.student.parameters()):
             teacher_param.data = teacher_param.data * gamma + student_param.data * (1 - gamma)
 
+
     def save(self, filepath):
         state = {
             'model_state_dict': self.state_dict(),
@@ -232,7 +239,14 @@ class DinoSR(nn.Module):
         }
         torch.save(state, filepath)
 
+
     def load(self, filepath):
         state = torch.load(filepath)
         self.load_state_dict(state['model_state_dict'])
         self.codebook.load_state(state['codebook_state'])
+
+def model_creator(cfg):
+    if cfg.model_type == "transformer":
+        return TransformerEncoder(cfg)
+    else:
+        return DeepMamba(cfg)
