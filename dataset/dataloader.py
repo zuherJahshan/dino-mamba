@@ -5,10 +5,13 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 
-datapath = '/workspace/mamba_based_slm/data/LibriSpeech/train-*/**/*.flac'
-
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
+
+datapaths = {
+    "train": "/workspace/mamba_based_slm/data/LibriSpeech/train-*/**/*.flac",
+    "abx": "/workspace/mamba_based_slm/data/zerospeech/datasets/abxLS-dataset/**/*.wav"
+}
 
 class AudioDataset(Dataset):
     def __init__(self, file_list, transform=None):
@@ -37,7 +40,14 @@ def collate_fn(batch):
     
     return padded_waveforms, batched_lengths
 
-def get_dataloader(batch_size, device='cuda', num_workers=8, sample_rate=16000):
+def get_dataloader(
+    batch_size,
+    data_type='train',
+    device='cuda',
+    num_workers=8,
+    sample_rate=16000
+):
+    datapath = datapaths[data_type]
     transform = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
     train_files = glob.glob(datapath, recursive=True)
     dataset = AudioDataset(train_files, transform=transform)

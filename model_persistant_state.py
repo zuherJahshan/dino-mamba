@@ -49,6 +49,7 @@ class ModelPersistantState:
         with open(self.performance_path, 'r') as file:
             self.performance = yaml.load(file, Loader=yaml.FullLoader)
         self.current_step = self.performance['step']
+        return dinosr
 
     def get_current_step(self):
         return self.current_step

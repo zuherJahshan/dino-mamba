@@ -79,21 +79,19 @@ if __name__ == '__main__':
         encoder_embed_dim=512,
         model_type="mamba",
     )
-
-    dino_model = DinoSR(cfg, model_creator).to(device)
     
     model_path = './models/mamba2'
     model_persistant_state = ModelPersistantState(model_path)
     try:
-        dino_sr = model_persistant_state.load_model()
+        dino_model = model_persistant_state.load_model()
         print("Loaded model successfully")
     except:
-        dino_model = DinoSR(cfg, lambda cfg: model_creator(cfg, "mamba")).to(device)
+        dino_model = DinoSR(cfg, model_creator).to(device)
         print("No model to load")
 
     num_epochs = 50
     batch_size = 320
-    mini_batch_size = 16
+    mini_batch_size = 10
     learning_rate = 0.0005
 
     # Define the learning rate schedule
