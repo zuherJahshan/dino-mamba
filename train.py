@@ -3,7 +3,7 @@ import os
 import torch
 import yaml
 import multiprocessing as mp
-
+import argparse
 from dataset import get_dataloader
 from fairseq.models import BaseFairseqModel
 from fairseq.models.wav2vec import TransformerEncoder
@@ -14,6 +14,7 @@ from model_persistant_state import ModelPersistantState
 from mamba import DeepMamba
 from typing import List
 from matplotlib import pyplot as plt
+import sys
 
 # Set the multiprocessing start method to 'spawn'
 mp.set_start_method('spawn', force=True)
@@ -68,26 +69,50 @@ class MetricMemory:
         return self.metric
 
 
+# using argparse make it run in two modes, load or create. If load is specified, then a model name must be specified
+# if create is specified, then a config file must be specified along with a model name.
+
+argparser = argparse.ArgumentParser()
+# make the mode excepting only two values, load or create
+argparser.add_argument('mode', type=str, help='Mode to run the script in, either load or create', choices=['load', 'create'])
+# argparser.add_argument('mode', type=str, help='Mode to run the script in, either load or create')
+argparser.add_argument('model_name', type=str, help='Name of the model to load')
+argparser.add_argument('--config_file', type=str, help='Path to the config file to create the model, must be specified when creating a model')
+args = argparser.parse_args()
 
 # Guard the main code
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
-    cfg = DinosrAudioConfig(
-        average_top_k_layers=7,
-        encoder_layers=10,
-        encoder_embed_dim=512,
-        model_type="mamba",
-    )
-    
-    model_path = './models/mamba2'
+    model_name = args.model_name
+    model_path = f'./models/{model_name}'
     model_persistant_state = ModelPersistantState(model_path)
-    try:
-        dino_model = model_persistant_state.load_model()
-        print("Loaded model successfully")
-    except:
+    if args.mode == 'load':
+        try:
+            dino_model = model_persistant_state.load_model()
+            cfg = dino_model.cfg
+            print("Loaded model successfully")
+        except:
+            print(f"Model {model_name} does not exist")
+            sys.exit(1)
+    else:
+        if args.config_file is None:
+            raise ValueError("Config file must be specified when creating a model")
+        if os.path.exists(model_path):
+            print(f"Model {model_name} already exists, are you sure you want to overwrite it? (y/n)")
+            response = input()
+            if response.lower() != 'y':
+                sys.exit(1)
+            else:
+                os.system(f"rm -rf {model_path}/*")
+        if not os.path.exists(args.config_file):
+            raise ValueError("Config file does not exist")
+        with open(args.config_file, 'r') as f:
+            config = yaml.safe_load(f)
+        cfg = DinosrAudioConfig(**config)
         dino_model = DinoSR(cfg, model_creator).to(device)
-        print("No model to load")
+        print("Created model successfully")
+
+    dino_model.to(device)
 
     num_epochs = 50
     batch_size = 320
