@@ -121,8 +121,10 @@ class DinoSR(nn.Module):
     def forward(
         self,
         waveforms,
-        lengths
-    ):  
+        lengths,
+        only_student=False
+    ):
+        result = {}
         # 1. run the feature extractor and transpose features
         features = self.feature_extractor(waveforms)
         
@@ -132,6 +134,7 @@ class DinoSR(nn.Module):
 
         # 3. run conv out shape to get the true output true lengths
         lengths = self.feature_extractor_out_length_calculator(lengths)
+        result["out_lengths"] = lengths
         
         # 4. run post fature extractor proj
         features = self.post_fe_proj(features)
@@ -146,10 +149,16 @@ class DinoSR(nn.Module):
         cloned_features = features.clone()
         masked_features = mask.unsqueeze(-1) * features
         x, student_layer_results = self.student(masked_features) # [B,T/C,D]
+        result["student"] = rearrange(x, "t b d -> b t d")
+        result["student_layer_results"] = [rearrange(layer_result[2], "t b d -> b t d") for layer_result in student_layer_results]
+        if only_student:
+            return result
 
         # 8. run the teacher model without training - make sure the pre teacher is not trainable here
         with torch.no_grad():
             teacher_x, teacher_layer_results = self.teacher(cloned_features)
+            result["teacher"] = rearrange(teacher_x, "t b d -> b t d")
+            result["teacher_layer_results"] = [rearrange(layer_result[2], "t b d -> b t d") for layer_result in teacher_layer_results]
 
         # 9. get the closest codewords, and update the codeword
         targets = []
@@ -208,17 +217,12 @@ class DinoSR(nn.Module):
         loss = 15 * loss / masks_sum
         accuracy = accuracy / self.layers_to_include_in_loss
         prob_mean = prob_mean / self.layers_to_include_in_loss
-        
+        result["loss"] = loss
+        result["accuracy"] = accuracy
+        result["prob_mean"] = prob_mean
+        result["targets"] = targets
 
-
-        return {
-            "loss": loss,
-            "student": x,
-            "teacher": teacher_x,
-            "accuracy": accuracy,
-            "prob_mean": prob_mean,
-            "targets": targets,
-        }
+        return result
 
 
     def update_teacher_params(

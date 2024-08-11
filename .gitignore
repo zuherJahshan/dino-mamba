@@ -390,3 +390,6 @@ models/
 mamba/
 
 dinosr/
+
+# Ignore results folder
+results/
