@@ -16,16 +16,26 @@ class Codebook(object):
         self.num_codewords = num_codewords
         self.decay = decay
         self.device = device
+        self.layers = layers
 
         # generate the codebook from a random normal distribution
         self.codebooks = []
         self.codebooks_sum = []
         self.codebooks_cnt = []
         codebook_var = 1 / (self.num_codewords ** 0.5)
+
+        
+        self._reset_accumulated()
+
+
         for _ in range(layers):
             self.codebooks.append(torch.normal(0.0, codebook_var, [num_codewords, dim]).to(device))
             self.codebooks_sum.append(self.codebooks[-1].clone())
             self.codebooks_cnt.append(torch.ones(num_codewords).to(device))
+
+    def _reset_accumulated(self):
+        self.accumulated_closest_codewords = [None] * self.layers
+        self.accumulated_x = [None] * self.layers
 
 
     def get_decay(self):
@@ -57,31 +67,39 @@ class Codebook(object):
         return torch.argmin(dist, dim=-1).squeeze()
         
 
-    def update_codewords(
-        self,
-        x: torch.Tensor, # gets a tensor of size [B,d]
-        closest_codewords: torch.Tensor, # gets a tensor of size [B]
-        codebook_idx: int,
-    ) -> None:
+    def accumulate_codewords_for_update(self, codebook_idx, x, closest_codewords):
+        if self.accumulated_closest_codewords[codebook_idx] is None:
+            self.accumulated_closest_codewords[codebook_idx] = closest_codewords
+            self.accumulated_x[codebook_idx] = x
+        else:
+            self.accumulated_closest_codewords[codebook_idx] = torch.cat([self.accumulated_closest_codewords[codebook_idx], closest_codewords], dim=0)
+            self.accumulated_x[codebook_idx] = torch.cat([self.accumulated_x[codebook_idx], x], dim=0)
+
+
+    def update_codewords(self) -> None:
         # Make closest codewords a one-hot tensor
-        one_hot = torch.nn.functional.one_hot(closest_codewords, self.num_codewords)
-        one_hot = one_hot.squeeze().float() # tensor of shape B,N
+        for codebook_idx, (acc, ax) in enumerate(zip(self.accumulated_closest_codewords, self.accumulated_x)):
+            if acc is None or ax is None:
+                raise ValueError("You should call accumulate_codewords_for_update before calling update_codewords")
+            one_hot = torch.nn.functional.one_hot(acc, self.num_codewords)
+            one_hot = one_hot.squeeze().float() # tensor of shape B,N
+            
+            # Calculate the new codebooks sum
+            z = torch.einsum('bd,bn->nd', ax, one_hot)
+            cnts = torch.sum(one_hot, dim=0) # tensor of shape N, representing the neighbors of each codeword
+
+            tau = torch.where(cnts > 0, self.decay, 1).to(self.device) ## freeze the codeword if it has no members
+
+            # Update the codebook sum
+            self.codebooks_sum[codebook_idx] = tau.unsqueeze(-1) * self.codebooks_sum[codebook_idx] + (1 - tau.unsqueeze(-1)) * z
+            self.codebooks_cnt[codebook_idx] = tau * self.codebooks_cnt[codebook_idx] + (1 - tau) * cnts
+
+            # Update the codebook
+            self.codebooks[codebook_idx] = self.codebooks_sum[codebook_idx] / self.codebooks_cnt[codebook_idx].unsqueeze(1)
+
+        self._reset_accumulated()
         
-        # Calculate the new codebooks sum
-        z = torch.einsum('bd,bn->nd', x, one_hot)
-        cnts = torch.sum(one_hot, dim=0) # tensor of shape N, representing the neighbors of each codeword
 
-        tau = torch.where(cnts > 0, self.decay, 1).to(self.device) ## freeze the codeword if it has no members
-
-        # Update the codebook sum
-        self.codebooks_sum[codebook_idx] = tau.unsqueeze(-1) * self.codebooks_sum[codebook_idx] + (1 - tau.unsqueeze(-1)) * z
-        self.codebooks_cnt[codebook_idx] = tau * self.codebooks_cnt[codebook_idx] + (1 - tau) * cnts
-
-        # Update the codebook
-        self.codebooks[codebook_idx] = self.codebooks_sum[codebook_idx] / self.codebooks_cnt[codebook_idx].unsqueeze(1)
-
-        return self.codebooks[codebook_idx]
-        
     def save_state(self):
         return {
             'codebooks': [cb.cpu().numpy() for cb in self.codebooks],

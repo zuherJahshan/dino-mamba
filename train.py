@@ -161,6 +161,7 @@ if __name__ == '__main__':
         mb_loss = 0
         mb_accuracy = 0
         mb_prob_mean = 0
+        targets = torch.zeros(cfg.codebook_size).to(device)
         for i, (waveforms, lengths) in enumerate(trainset):
             # empty cache to avoid memory leak
             torch.cuda.empty_cache()
@@ -170,12 +171,22 @@ if __name__ == '__main__':
             loss = results['loss'] / n
             accuracy = results['accuracy']
             prob_mean = results['prob_mean']
-            targets: List[torch.Tensor] = results['targets']
+            target = results['targets'][-1]
+            onehot_target = torch.nn.functional.one_hot(target, num_classes=cfg.codebook_size)
+            targets += onehot_target.sum(dim=(0, 1))
+
+
             
             # Accumulate loss and accuracy
             mb_loss += loss.item()
             mb_accuracy += accuracy.item()
             mb_prob_mean += prob_mean.item()
+
+            # Accumulate codewords for update
+            for layer_idx in results['codebook_update']:
+                x = results['codebook_update'][layer_idx]['flattened_teacher_layer_results']
+                closest_codewords = results['codebook_update'][layer_idx]['closest_codewords']
+                dino_model.codebook.accumulate_codewords_for_update(layer_idx, x, closest_codewords)
             
             # Backward pass
             loss.backward()
@@ -191,6 +202,9 @@ if __name__ == '__main__':
                 
                 # Step the scheduler
                 scheduler.step()
+
+                # Update the codebooks
+                dino_model.codebook.update_codewords()
 
                 # update the metrics
                 long_loss.update(mb_loss / n)
@@ -227,10 +241,11 @@ if __name__ == '__main__':
                 short_loss.print()
                 short_accuracy.print(print_precentage=True)
                 short_prob_mean.print(print_precentage=True)
-                for target in targets:
-                    onehot_target = torch.nn.functional.one_hot(target, num_classes=cfg.codebook_size)
-                    onehot_target = onehot_target.sum(dim=(0, 1)).to("cpu").detach().numpy()
-                    # plot as a histogram to the console
-                    plt.bar(range(cfg.codebook_size), onehot_target)
-                    # save plot to plt.png
-                    plt.savefig(f'{model_path}/plots/plt_{batch_step}.png')
+
+                # print the targets
+                targets = targets.to("cpu").detach().numpy()
+                # plot as a histogram to the console
+                plt.bar(range(cfg.codebook_size), targets)
+                # save plot to plt.png
+                plt.savefig(f'{model_path}/plots/plt_{batch_step}.png')
+                targets = torch.zeros(cfg.codebook_size).to(device)

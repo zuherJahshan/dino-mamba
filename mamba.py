@@ -39,20 +39,4 @@ class DeepMamba(nn.Module):
             layer_results.append(([], [], rearrange(x, 'b t d -> t b d')))
         return rearrange(x, 'b t d -> t b d'), layer_results
 
-# %%
-# dinosr_cfg = DinosrAudioConfig()
-
-# %%
-# model = DeepMamba(dinosr_cfg).to(device)
-
-# B, T, d = 1, 10, dinosr_cfg.encoder_embed_dim
-# x = torch.randn(B, T, d).to(device)
-# y, layer_results = model(x)
-
-# %%
-# y.shape
-
-# %%
-
-
 

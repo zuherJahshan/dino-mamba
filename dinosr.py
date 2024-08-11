@@ -163,17 +163,20 @@ class DinoSR(nn.Module):
         # 9. get the closest codewords, and update the codeword
         targets = []
         first_layer_to_include = self.num_layers - self.layers_to_include_in_loss
+        result["codebook_update"] = {}
         for i in range(first_layer_to_include, self.num_layers):
             flattened_teacher_layer_results = rearrange(teacher_layer_results[i][2], "b t d -> (b t) d")
             closest_codewords = self.codebook.get_closest_codewords(
                 flattened_teacher_layer_results,
                 i - first_layer_to_include
             )
-            self.codebook.update_codewords(
-                flattened_teacher_layer_results,
-                closest_codewords,
-                i - first_layer_to_include
-            )
+            # return information re codebook updates
+            result["codebook_update"].update({
+                i - first_layer_to_include: {
+                    "closest_codewords": closest_codewords,
+                    "flattened_teacher_layer_results": flattened_teacher_layer_results,
+                }
+            })
             closest_codewords = rearrange(closest_codewords, "(b t) -> b t", b=features.shape[0])
             targets.append(closest_codewords)
 
