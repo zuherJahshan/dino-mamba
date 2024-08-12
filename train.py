@@ -85,6 +85,7 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model_name = args.model_name
     model_path = f'./models/{model_name}'
+    model_exists = os.path.exists(model_path)
     model_persistant_state = ModelPersistantState(model_path)
     if args.mode == 'load':
         try:
@@ -97,8 +98,8 @@ if __name__ == '__main__':
     else:
         if args.config_file is None:
             raise ValueError("Config file must be specified when creating a model")
-        if os.path.exists(model_path):
-            print(f"Model {model_name} already exists, are you sure you want to overwrite it? (y/n)")
+        if model_exists:
+            print(f"Model {model_name} already exists, are you sure you want to overwrite it? (y/N)")
             response = input()
             if response.lower() != 'y':
                 sys.exit(1)
@@ -116,7 +117,7 @@ if __name__ == '__main__':
 
     num_epochs = 50
     batch_size = 320
-    mini_batch_size = 10
+    mini_batch_size = 16
     learning_rate = 0.0005
 
     # Define the learning rate schedule
@@ -151,17 +152,15 @@ if __name__ == '__main__':
 
     long_loss = MetricMemory('Long Loss', 100)
     long_accuracy = MetricMemory('Long Accuracy', 100)
-    long_prob_mean = MetricMemory('Long Prob Mean', 100)
     short_loss = MetricMemory('Short Loss', 10)
     short_accuracy = MetricMemory('Short Accuracy', 10)
-    short_prob_mean = MetricMemory('Short Prob Mean', 10)
     # make plots dir
     os.makedirs(f'{model_path}/plots', exist_ok=True)
     for epoch in range(num_epochs):
         mb_loss = 0
         mb_accuracy = 0
-        mb_prob_mean = 0
-        targets = torch.zeros(cfg.codebook_size).to(device)
+        prob_bins = torch.zeros(cfg.codebook_size).to(device)
+        prob_bins_binary = torch.zeros(cfg.codebook_size).to(device).to(torch.bool)
         for i, (waveforms, lengths) in enumerate(trainset):
             # empty cache to avoid memory leak
             torch.cuda.empty_cache()
@@ -170,23 +169,27 @@ if __name__ == '__main__':
             results = dino_model(waveforms, lengths)
             loss = results['loss'] / n
             accuracy = results['accuracy']
-            prob_mean = results['prob_mean']
+            prob_bins += results['prob_bins']
+            prob_bins_binary |= results['prob_bins_binary']
             target = results['targets'][-1]
             onehot_target = torch.nn.functional.one_hot(target, num_classes=cfg.codebook_size)
-            targets += onehot_target.sum(dim=(0, 1))
 
 
             
             # Accumulate loss and accuracy
             mb_loss += loss.item()
             mb_accuracy += accuracy.item()
-            mb_prob_mean += prob_mean.item()
 
             # Accumulate codewords for update
             for layer_idx in results['codebook_update']:
                 x = results['codebook_update'][layer_idx]['flattened_teacher_layer_results']
                 closest_codewords = results['codebook_update'][layer_idx]['closest_codewords']
-                dino_model.codebook.accumulate_codewords_for_update(layer_idx, x, closest_codewords)
+                dino_model.codebook.accumulate_codewords_for_update(
+                    layer_idx, 
+                    x, 
+                    closest_codewords, 
+                    results['codebook_update'][layer_idx]['flattened_mask']
+                )
             
             # Backward pass
             loss.backward()
@@ -209,15 +212,12 @@ if __name__ == '__main__':
                 # update the metrics
                 long_loss.update(mb_loss / n)
                 long_accuracy.update(mb_accuracy / n)
-                long_prob_mean.update(mb_prob_mean / n)
                 short_loss.update(mb_loss / n)
                 short_accuracy.update(mb_accuracy / n)
-                short_prob_mean.update(mb_prob_mean / n)
 
                 # zero the metrics for next step
                 mb_loss = 0
                 mb_accuracy = 0
-                mb_prob_mean = 0
 
                 # Save the model and training history
                 model_persistant_state.save_model(
@@ -226,7 +226,6 @@ if __name__ == '__main__':
                     performance={
                         'loss': long_loss.get_metric(),
                         'accuracy': long_accuracy.get_metric(),
-                        'prob_mean': long_prob_mean.get_metric(),
                     }
                 )    
 
@@ -236,16 +235,24 @@ if __name__ == '__main__':
                 print(f"| {title_string}" + " " * (long_loss.get_print_length() - len(title_string) - 3) + "|")
                 long_loss.print()
                 long_accuracy.print(print_precentage=True)
-                long_prob_mean.print(print_precentage=True)
                 print("-" * long_loss.get_print_length())
                 short_loss.print()
                 short_accuracy.print(print_precentage=True)
-                short_prob_mean.print(print_precentage=True)
 
                 # print the targets
-                targets = targets.to("cpu").detach().numpy()
+                prob_bins = prob_bins.to("cpu").detach().numpy()
+                prob_bins_binary = prob_bins_binary.to(torch.float32).to("cpu").detach().numpy()
                 # plot as a histogram to the console
-                plt.bar(range(cfg.codebook_size), targets)
+                plt.bar(range(cfg.codebook_size), prob_bins)
                 # save plot to plt.png
                 plt.savefig(f'{model_path}/plots/plt_{batch_step}.png')
-                targets = torch.zeros(cfg.codebook_size).to(device)
+                # clear the plot
+                plt.clf()
+
+                plt.bar(range(cfg.codebook_size), prob_bins_binary)
+                # save plot to plt.png
+                plt.savefig(f'{model_path}/plots/plt_binary_{batch_step}.png')
+                plt.clf()
+
+                prob_bins = torch.zeros(cfg.codebook_size).to(device)
+                prob_bins_binary = torch.zeros(cfg.codebook_size).to(device).to(torch.bool)

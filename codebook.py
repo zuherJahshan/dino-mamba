@@ -1,6 +1,7 @@
 # Will define the following funcitonalities
-from einops import rearrange, repeat
+from einops import rearrange, repeat, einsum
 import torch
+import math
 
 class Codebook(object):
     def __init__(
@@ -22,20 +23,23 @@ class Codebook(object):
         self.codebooks = []
         self.codebooks_sum = []
         self.codebooks_cnt = []
-        codebook_var = 1 / (self.num_codewords ** 0.5)
+        codebook_var = 1 / math.sqrt(self.dim)
 
         
         self._reset_accumulated()
 
 
         for _ in range(layers):
-            self.codebooks.append(torch.normal(0.0, codebook_var, [num_codewords, dim]).to(device))
+            cb = torch.normal(0.0, codebook_var, [num_codewords, dim]).to(device)
+            # cb = torch.nn.functional.normalize(cb, p=2, dim=-1)
+            self.codebooks.append(cb)
             self.codebooks_sum.append(self.codebooks[-1].clone())
             self.codebooks_cnt.append(torch.ones(num_codewords).to(device))
 
     def _reset_accumulated(self):
         self.accumulated_closest_codewords = [None] * self.layers
         self.accumulated_x = [None] * self.layers
+        self.mask = [None] * self.layers
 
 
     def get_decay(self):
@@ -67,13 +71,15 @@ class Codebook(object):
         return torch.argmin(dist, dim=-1).squeeze()
         
 
-    def accumulate_codewords_for_update(self, codebook_idx, x, closest_codewords):
+    def accumulate_codewords_for_update(self, codebook_idx, x, closest_codewords, mask):
         if self.accumulated_closest_codewords[codebook_idx] is None:
             self.accumulated_closest_codewords[codebook_idx] = closest_codewords
             self.accumulated_x[codebook_idx] = x
+            self.mask[codebook_idx] = mask
         else:
             self.accumulated_closest_codewords[codebook_idx] = torch.cat([self.accumulated_closest_codewords[codebook_idx], closest_codewords], dim=0)
             self.accumulated_x[codebook_idx] = torch.cat([self.accumulated_x[codebook_idx], x], dim=0)
+            self.mask[codebook_idx] = torch.cat([self.mask[codebook_idx], mask], dim=0)
 
 
     def update_codewords(self) -> None:
@@ -83,9 +89,13 @@ class Codebook(object):
                 raise ValueError("You should call accumulate_codewords_for_update before calling update_codewords")
             one_hot = torch.nn.functional.one_hot(acc, self.num_codewords)
             one_hot = one_hot.squeeze().float() # tensor of shape B,N
+            mask = self.mask[codebook_idx].float() # tensor of shape B
             
             # Calculate the new codebooks sum
-            z = torch.einsum('bd,bn->nd', ax, one_hot)
+            z = einsum(one_hot, mask, 'b n, b -> b n')
+            z = einsum(ax, z, 'b d, b n -> n d')
+
+
             cnts = torch.sum(one_hot, dim=0) # tensor of shape N, representing the neighbors of each codeword
 
             tau = torch.where(cnts > 0, self.decay, 1).to(self.device) ## freeze the codeword if it has no members

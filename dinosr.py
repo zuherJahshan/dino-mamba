@@ -165,7 +165,8 @@ class DinoSR(nn.Module):
         first_layer_to_include = self.num_layers - self.layers_to_include_in_loss
         result["codebook_update"] = {}
         for i in range(first_layer_to_include, self.num_layers):
-            flattened_teacher_layer_results = rearrange(teacher_layer_results[i][2], "b t d -> (b t) d")
+            flattened_teacher_layer_results = F.instance_norm(teacher_layer_results[i][2])
+            flattened_teacher_layer_results = rearrange(flattened_teacher_layer_results, "b t d -> (b t) d")
             closest_codewords = self.codebook.get_closest_codewords(
                 flattened_teacher_layer_results,
                 i - first_layer_to_include
@@ -175,6 +176,7 @@ class DinoSR(nn.Module):
                 i - first_layer_to_include: {
                     "closest_codewords": closest_codewords,
                     "flattened_teacher_layer_results": flattened_teacher_layer_results,
+                    "flattened_mask": rearrange(mask, "b t -> (b t)"),
                 }
             })
             closest_codewords = rearrange(closest_codewords, "(b t) -> b t", b=features.shape[0])
@@ -186,16 +188,18 @@ class DinoSR(nn.Module):
             #we should include only 
             return ((representation.argmax(dim=-1) == target).float() * mask.float()).sum() / mask.sum()
         
-        def calculate_probability_bins(representation, target, mask):
+        def calculate_probability_bins(representation, target, mask, binary=False):
             # pred is [B,T,C], target is [B,T] and mask is [B,T].
             # onehot the target to have the same shape as pred
             onehot_target = F.one_hot(target, num_classes=representation.shape[-1]).to(torch.float32)
             onehot_mask = mask.unsqueeze(-1).expand_as(onehot_target).to(torch.float32)
             # scatter the predicitons into a histogram
             hist_sum = einsum(onehot_mask, onehot_target, F.softmax(representation, dim=-1), "b t c, b t c, b t c -> c")
+            if binary:
+                return (hist_sum > 0)
             hist_cnt = (onehot_target * onehot_mask).sum(dim=(0,1))
             hist_cnt = torch.where(hist_cnt == 0, 1, hist_cnt)
-            return (hist_sum / hist_cnt).mean()
+            return (hist_sum / hist_cnt)
 
         def calculate_loss(representation, target, mask):
             # pred is [B,T,C], target is [B,T] and mask is [B,T].
@@ -205,24 +209,71 @@ class DinoSR(nn.Module):
             masked_onehot_target = einsum(onehot_target, mask, "b t c, b t -> b t c")
             # calculate the loss
             return einsum(masked_onehot_target, pred, "b t c, b t c ->")
+
+        def calculate_entropy_regularization(representation, mask):
+            # Calculate the softmax to get the probabilities
+            probs = F.softmax(representation, dim=-1)
+            log_probs = F.log_softmax(representation, dim=-1)
+            
+            # Calculate entropy: -Σp(x)log(p(x))
+            entropy = -einsum(probs, log_probs, "b t c, b t c -> b t") * mask.float()
+            
+            # Sum over time and batch, then normalize
+            return entropy.sum()
         
+        def calculate_kl_divergence_regularization(cluster_assignments):
+            # Calculate the empirical distribution of cluster assignments
+            cluster_probs = torch.mean(cluster_assignments, dim=0)
+            
+            # Calculate the uniform distribution
+            uniform_distribution = torch.ones_like(cluster_probs) / cluster_probs.shape[0]
+            
+            # Calculate KL Divergence
+            kl_div = F.kl_div(cluster_probs.log(), uniform_distribution, reduction='batchmean')
+            
+            return kl_div
+        
+
+        def calculate_over_clustering_penalty(representation, mask):
+            # Softmax over the classes to get soft assignments
+            soft_assignments = F.softmax(representation, dim=-1)
+            
+            # Sum soft assignments across batch and time dimensions
+            cluster_sums = einsum(soft_assignments, mask.float(), "b t c, b t -> c")
+            
+            # Calculate the mean and variance of the cluster assignments
+            mean_cluster_assignments = cluster_sums.mean()
+            var_cluster_assignments = cluster_sums.var()
+            
+            # Penalty for deviation from the mean (over-clustering penalty)
+            over_clustering_penalty = var_cluster_assignments / (mean_cluster_assignments ** 2 + 1e-6)
+            
+            return over_clustering_penalty
+            
+
         # 11. calculate the loss
         loss = 0
         accuracy = 0
         masks_sum = 0
+        # entropy_regularization = 0
+        # kl_divergence_regularization = 0
+        # reg_lambda = 30
         for i in range(self.layers_to_include_in_loss):
             representation = self.classifiers[i](rearrange(student_layer_results[first_layer_to_include + i][2], "t b c -> b t c")) # [B,T,C] where C is the number of classes
             masks_sum += mask.sum()
             loss += calculate_loss(representation, targets[i], mask)
             accuracy += calculate_accuracy(representation, targets[i], mask)
-            prob_mean = calculate_probability_bins(representation, targets[i], mask)
-        # loss += 
+             
+            # Calculate the KL Divergence regularization
+            # kl_divergence_regularization += calculate_over_clustering_penalty(representation, mask)
+
+        result['prob_bins'] = calculate_probability_bins(representation, targets[-1], mask)
+        result['prob_bins_binary'] = calculate_probability_bins(representation, targets[-1], mask, binary=True)
+
         loss = 15 * loss / masks_sum
         accuracy = accuracy / self.layers_to_include_in_loss
-        prob_mean = prob_mean / self.layers_to_include_in_loss
         result["loss"] = loss
         result["accuracy"] = accuracy
-        result["prob_mean"] = prob_mean
         result["targets"] = targets
 
         return result
