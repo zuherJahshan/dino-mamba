@@ -268,8 +268,11 @@ class DinoSR(nn.Module):
             
             cluster_probs = torch.sum(cluster_assignments, dim=0) / cluster_assignments.shape[0]
             
+            # assert all values of cluster_probs are between 0 and 1
+            assert (cluster_probs >= 0).all() and (cluster_probs <= 1).all()
+            
             # Calculate the uniform distribution
-            uniform_distribution = torch.ones_like(cluster_probs) / cluster_assignments.shape[0]
+            uniform_distribution = torch.ones_like(cluster_probs) / cluster_assignments.shape[1]
             
             # Calculate KL Divergence
             kl_div = F.kl_div(cluster_probs.log(), uniform_distribution, reduction='sum')
@@ -300,7 +303,7 @@ class DinoSR(nn.Module):
         # masks_sum = 0
         # # entropy_regularization = 0
         kl_divergence_regularization = 0
-        # reg_lambda = 50000
+        reg_lambda = 50000
         for i in range(self.layers_to_include_in_loss):
             representations = self.classifiers[i](flattened_student_layer_results[i])
             loss += calculate_loss(representations, targets[i])
@@ -312,11 +315,13 @@ class DinoSR(nn.Module):
         result['prob_bins'] = calculate_probability_bins(representations)
         result['prob_bins_binary'] = calculate_probability_bins(representations, binary=True)
 
-        # loss = 15 * loss / masks_sum + reg_lambda * ( kl_divergence_regularization / self.layers_to_include_in_loss )
-        # loss = (loss + kl_divergence_regularization) / self.layers_to_include_in_loss
-        loss = (loss ) / self.layers_to_include_in_loss
+        ce_loss = loss / self.layers_to_include_in_loss
+        kl_loss = reg_lambda * kl_divergence_regularization / self.layers_to_include_in_loss
+        loss = ce_loss + kl_loss
         accuracy = accuracy / self.layers_to_include_in_loss
         result["loss"] = loss
+        result["cross_entropy_loss"] = ce_loss
+        result["kl_divergence_loss"] = kl_loss
         result["accuracy"] = accuracy
         result["targets"] = targets[-1]
 

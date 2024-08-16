@@ -385,6 +385,7 @@ data/
 
 # Ignore models repository
 models/
+models.bak/
 
 # Ignore Mamba
 mamba/
