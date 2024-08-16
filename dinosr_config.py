@@ -73,6 +73,12 @@ class DinosrAudioConfig(Wav2Vec2Config):
         default=0.01,
         metadata={"help": "stop training if prediction var falls below this"},
     )
+
+    kl_div_from_uniform_lambda: float = field(
+        default=200_000,
+        metadata={"help": "The degree of attention to put in loss on the divergence of codewords distribution from the uniform probability"}
+        )
+
     
 
     @classmethod

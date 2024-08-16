@@ -153,15 +153,18 @@ if __name__ == '__main__':
     long_loss = MetricMemory('Long Loss', 100)
     long_accuracy = MetricMemory('Long Accuracy', 100)
     long_kl_loss = MetricMemory('Long KL Loss', 100)
+    long_ce_loss = MetricMemory('Long CE Loss', 100)
     short_loss = MetricMemory('Short Loss', 10)
     short_accuracy = MetricMemory('Short Accuracy', 10)
     short_kl_loss = MetricMemory('Short KL Loss', 10)
+    short_ce_loss = MetricMemory('Short CE Loss', 10)
     # make plots dir
     os.makedirs(f'{model_path}/plots', exist_ok=True)
     for epoch in range(num_epochs):
         mb_loss = 0
         mb_accuracy = 0
         mb_kl_loss = 0
+        mb_ce_loss = 0
         prob_bins = torch.zeros(cfg.codebook_size).to(device)
         prob_bins_binary = torch.zeros(cfg.codebook_size).to(device).to(torch.bool)
         for i, (waveforms, lengths) in enumerate(trainset):
@@ -182,7 +185,8 @@ if __name__ == '__main__':
             # Accumulate loss and accuracy
             mb_loss += loss.item()
             mb_accuracy += accuracy.item()
-            mb_kl_loss += results['kl_divergence_loss'].item()
+            mb_kl_loss += results['kl_divergence_loss'].item() / n
+            mb_ce_loss += results['cross_entropy_loss'].item() / n
 
             # Accumulate codewords for update
             for layer_idx in results['codebook_update']:
@@ -216,14 +220,17 @@ if __name__ == '__main__':
                 long_loss.update(mb_loss / n)
                 long_accuracy.update(mb_accuracy / n)
                 long_kl_loss.update(mb_kl_loss / n)
+                long_ce_loss.update(mb_ce_loss / n)
                 short_loss.update(mb_loss / n)
                 short_accuracy.update(mb_accuracy / n)
                 short_kl_loss.update(mb_kl_loss / n)
+                short_ce_loss.update(mb_ce_loss / n)
 
                 # zero the metrics for next step
                 mb_loss = 0
                 mb_accuracy = 0
                 mb_kl_loss = 0
+                mb_ce_loss = 0
 
                 # Save the model and training history
                 model_persistant_state.save_model(
@@ -242,10 +249,12 @@ if __name__ == '__main__':
                 long_loss.print()
                 long_accuracy.print(print_precentage=True)
                 long_kl_loss.print()
+                long_ce_loss.print()
                 print("-" * long_loss.get_print_length())
                 short_loss.print()
                 short_accuracy.print(print_precentage=True)
                 short_kl_loss.print()
+                short_ce_loss.print()
 
                 # print the targets
                 prob_bins = prob_bins / cfg.average_top_k_layers

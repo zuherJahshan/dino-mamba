@@ -33,7 +33,7 @@ class DinoSR(nn.Module):
         self.teacher_decay = cfg.ema_decay
         self.teacher_end_decay = cfg.ema_end_decay
         self.teacher_decay_steps = cfg.ema_anneal_end_step
-
+        self.kl_div_from_uniform_lambda = cfg.kl_div_from_uniform_lambda
         self.starting_mask_prob = get_starting_mask_prob(cfg.mask_prob, cfg.mask_length)
         self.num_layers = cfg.encoder_layers
         self.layers_to_include_in_loss = cfg.average_top_k_layers
@@ -248,17 +248,6 @@ class DinoSR(nn.Module):
             onehot_target = F.one_hot(target, num_classes=pred.shape[-1]).to(torch.float32)
             # calculate the loss
             return einsum(onehot_target, pred, "b c, b c ->")
-
-        # def calculate_entropy_regularization(representation):
-        #     # Calculate the softmax to get the probabilities
-        #     probs = F.softmax(representation, dim=-1)
-        #     log_probs = F.log_softmax(representation, dim=-1)
-            
-        #     # Calculate entropy: -Σp(x)log(p(x))
-        #     entropy = -einsum(probs, log_probs, "b t c, b t c -> b t") * mask.float()
-            
-        #     # Sum over time and batch, then normalize
-        #     return entropy.sum()
         
         def calculate_kl_divergence_regularization(representation):
             # Calculate the empirical distribution of cluster assignments
@@ -300,10 +289,7 @@ class DinoSR(nn.Module):
         # 11. calculate the loss
         loss = 0
         accuracy = 0
-        # masks_sum = 0
-        # # entropy_regularization = 0
         kl_divergence_regularization = 0
-        reg_lambda = 50000
         for i in range(self.layers_to_include_in_loss):
             representations = self.classifiers[i](flattened_student_layer_results[i])
             loss += calculate_loss(representations, targets[i])
@@ -316,7 +302,7 @@ class DinoSR(nn.Module):
         result['prob_bins_binary'] = calculate_probability_bins(representations, binary=True)
 
         ce_loss = loss / self.layers_to_include_in_loss
-        kl_loss = reg_lambda * kl_divergence_regularization / self.layers_to_include_in_loss
+        kl_loss = self.kl_div_from_uniform * kl_divergence_regularization / self.layers_to_include_in_loss
         loss = ce_loss + kl_loss
         accuracy = accuracy / self.layers_to_include_in_loss
         result["loss"] = loss

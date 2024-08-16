@@ -73,6 +73,7 @@ max_update: ${optimization.max_update}
 min_pred_var: 0.01
 min_target_var: 0.1
 model_type: transformer
+kl_div_from_uniform_lambda: 200_000
 negatives_from_everywhere: false
 no_mask_channel_overlap: false
 no_mask_overlap: false
