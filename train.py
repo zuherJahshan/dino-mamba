@@ -188,7 +188,6 @@ if __name__ == '__main__':
                     layer_idx, 
                     x, 
                     closest_codewords, 
-                    results['codebook_update'][layer_idx]['flattened_mask']
                 )
             
             # Backward pass
@@ -240,7 +239,9 @@ if __name__ == '__main__':
                 short_accuracy.print(print_precentage=True)
 
                 # print the targets
+                prob_bins = prob_bins / cfg.average_top_k_layers
                 prob_bins = prob_bins.to("cpu").detach().numpy()
+                number_of_active_bins = torch.sum(prob_bins_binary.to(torch.float32)).item()
                 prob_bins_binary = prob_bins_binary.to(torch.float32).to("cpu").detach().numpy()
                 # plot as a histogram to the console
                 plt.bar(range(cfg.codebook_size), prob_bins)
@@ -254,5 +255,8 @@ if __name__ == '__main__':
                 plt.savefig(f'{model_path}/plots/plt_binary_{batch_step}.png')
                 plt.clf()
 
+                print("The number of active bins is: ", number_of_active_bins)
+                
                 prob_bins = torch.zeros(cfg.codebook_size).to(device)
                 prob_bins_binary = torch.zeros(cfg.codebook_size).to(device).to(torch.bool)
+                

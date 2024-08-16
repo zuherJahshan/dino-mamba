@@ -1,6 +1,7 @@
 # Will define the following funcitonalities
 from einops import rearrange, repeat, einsum
 import torch
+import torch.nn.functional as F
 import math
 
 class Codebook(object):
@@ -23,23 +24,26 @@ class Codebook(object):
         self.codebooks = []
         self.codebooks_sum = []
         self.codebooks_cnt = []
-        codebook_var = 1 / math.sqrt(self.dim)
+        # codebook_var = 1 / math.sqrt(self.dim)
 
         
         self._reset_accumulated()
 
 
-        for _ in range(layers):
-            cb = torch.normal(0.0, codebook_var, [num_codewords, dim]).to(device)
+        codebooks = torch.randn(layers, self.dim, self.num_codewords).to(device)
+        codebooks = F.instance_norm(codebooks).transpose(1,2)
+        for i in range(layers):
+            cb = codebooks[i]
+            # cb = torch.normal(0.0, codebook_var, [num_codewords, dim]).to(device)
             # cb = torch.nn.functional.normalize(cb, p=2, dim=-1)
             self.codebooks.append(cb)
-            self.codebooks_sum.append(self.codebooks[-1].clone())
+            self.codebooks_sum.append(cb.clone())
             self.codebooks_cnt.append(torch.ones(num_codewords).to(device))
 
     def _reset_accumulated(self):
         self.accumulated_closest_codewords = [None] * self.layers
         self.accumulated_x = [None] * self.layers
-        self.mask = [None] * self.layers
+        # self.cw_mask_prob = 0.5
 
 
     def get_decay(self):
@@ -65,21 +69,23 @@ class Codebook(object):
         
         # compute the distance between the two tensors, and loss any ra dimensions
         dist = torch.cdist(re_x, re_codebook) # will result an input of shape BxNx1
-        dist.squeeze()
+        dist = dist.squeeze()
+
+        # mask randomly selected codewords
+        # mask_cw = torch.rand(re_x.shape[0], self.num_codewords).to(self.device) < self.cw_mask_prob
+        # dist[mask_cw] = float('inf')
 
         # return the index of the closest codeword
         return torch.argmin(dist, dim=-1).squeeze()
         
 
-    def accumulate_codewords_for_update(self, codebook_idx, x, closest_codewords, mask):
+    def accumulate_codewords_for_update(self, codebook_idx, x, closest_codewords):
         if self.accumulated_closest_codewords[codebook_idx] is None:
             self.accumulated_closest_codewords[codebook_idx] = closest_codewords
             self.accumulated_x[codebook_idx] = x
-            self.mask[codebook_idx] = mask
         else:
             self.accumulated_closest_codewords[codebook_idx] = torch.cat([self.accumulated_closest_codewords[codebook_idx], closest_codewords], dim=0)
             self.accumulated_x[codebook_idx] = torch.cat([self.accumulated_x[codebook_idx], x], dim=0)
-            self.mask[codebook_idx] = torch.cat([self.mask[codebook_idx], mask], dim=0)
 
 
     def update_codewords(self) -> None:
@@ -89,11 +95,10 @@ class Codebook(object):
                 raise ValueError("You should call accumulate_codewords_for_update before calling update_codewords")
             one_hot = torch.nn.functional.one_hot(acc, self.num_codewords)
             one_hot = one_hot.squeeze().float() # tensor of shape B,N
-            mask = self.mask[codebook_idx].float() # tensor of shape B
+            # mask = self.mask[codebook_idx].float() # tensor of shape B
             
             # Calculate the new codebooks sum
-            z = einsum(one_hot, mask, 'b n, b -> b n')
-            z = einsum(ax, z, 'b d, b n -> n d')
+            z = einsum(ax, one_hot, 'b d, b n -> n d')
 
 
             cnts = torch.sum(one_hot, dim=0) # tensor of shape N, representing the neighbors of each codeword
