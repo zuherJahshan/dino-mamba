@@ -225,8 +225,8 @@ class DinoSR(nn.Module):
 
         
         def calculate_accuracy(representation, target):
-        #     # pred is [B,C], target is [B]
-        #     #we should include only 
+            # pred is [B,C], target is [B]
+            # we should include only 
             return ((representation.argmax(dim=-1) == target).float()).sum() / target.shape[0]
         
         def calculate_probability_bins(representation, binary=False):
@@ -302,7 +302,7 @@ class DinoSR(nn.Module):
         result['prob_bins_binary'] = calculate_probability_bins(representations, binary=True)
 
         ce_loss = loss / self.layers_to_include_in_loss
-        kl_loss = self.kl_div_from_uniform * kl_divergence_regularization / self.layers_to_include_in_loss
+        kl_loss = self.kl_div_from_uniform_lambda * kl_divergence_regularization / self.layers_to_include_in_loss
         loss = ce_loss + kl_loss
         accuracy = accuracy / self.layers_to_include_in_loss
         result["loss"] = loss
@@ -337,6 +337,7 @@ class DinoSR(nn.Module):
         state = torch.load(filepath)
         self.load_state_dict(state['model_state_dict'])
         self.codebook.load_state(state['codebook_state'])
+
 
 def model_creator(cfg):
     if cfg.model_type == "transformer":

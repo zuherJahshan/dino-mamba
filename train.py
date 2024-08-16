@@ -158,6 +158,9 @@ if __name__ == '__main__':
     short_accuracy = MetricMemory('Short Accuracy', 10)
     short_kl_loss = MetricMemory('Short KL Loss', 10)
     short_ce_loss = MetricMemory('Short CE Loss', 10)
+
+    active_codewords = MetricMemory('Active Codewords', 1)
+
     # make plots dir
     os.makedirs(f'{model_path}/plots', exist_ok=True)
     for epoch in range(num_epochs):
@@ -226,6 +229,11 @@ if __name__ == '__main__':
                 short_kl_loss.update(mb_kl_loss / n)
                 short_ce_loss.update(mb_ce_loss / n)
 
+                active_codewords.update(
+                    torch.sum(prob_bins_binary.to(torch.float32)).to("cpu").detach().numpy() / cfg.codebook_size
+                )
+
+
                 # zero the metrics for next step
                 mb_loss = 0
                 mb_accuracy = 0
@@ -255,6 +263,8 @@ if __name__ == '__main__':
                 short_accuracy.print(print_precentage=True)
                 short_kl_loss.print()
                 short_ce_loss.print()
+                print("-" * long_loss.get_print_length())
+                active_codewords.print(print_precentage=True)
 
                 # print the targets
                 prob_bins = prob_bins / cfg.average_top_k_layers
@@ -273,7 +283,13 @@ if __name__ == '__main__':
                 plt.savefig(f'{model_path}/plots/plt_binary_{batch_step}.png')
                 plt.clf()
 
-                print("The number of active bins is: ", number_of_active_bins)
+                # delete old plot
+                old_batch_step = batch_step - 10
+                if old_batch_step > 0:
+                    os.system(f"rm -rf {model_path}/plots/plt_{old_batch_step}.png")
+                    os.system(f"rm -rf {model_path}/plots/plt_binary_{old_batch_step}.png")
+
+                # print("The number of active bins is: ", number_of_active_bins)
                 
                 prob_bins = torch.zeros(cfg.codebook_size).to(device)
                 prob_bins_binary = torch.zeros(cfg.codebook_size).to(device).to(torch.bool)
